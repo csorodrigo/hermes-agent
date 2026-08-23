@@ -63,11 +63,16 @@ def option(command: list[str], flag: str, value: Any) -> None:
 
 
 def guard(command: str) -> dict[str, Any]:
+    """Run the normal Hermes guard without inheriting container exemptions.
+
+    The harness can target SSH through a profile even when the ordinary Hermes
+    terminal backend is Docker/Modal. Passing that backend here would skip the
+    guard entirely, so harness commands always use the host/SSH risk policy.
+    """
     try:
         from tools.approval import check_all_command_guards
 
-        env_type = "ssh" if os.getenv("HERDR_SSH_TARGET") else os.getenv("TERMINAL_ENV", "local")
-        return check_all_command_guards(command, env_type)
+        return check_all_command_guards(command, "ssh")
     except Exception as exc:
         return {
             "approved": False,
@@ -115,13 +120,14 @@ def build_args(args: dict[str, Any]) -> tuple[list[str] | None, dict[str, Any] |
         missing = required(args, "workspace_id")
         if missing:
             return None, {"error": missing}
-        command = [*prefix, "task-remove", str(args["workspace_id"])]
         if args.get("force"):
-            decision = guard(f"git worktree remove --force {args['workspace_id']}")
-            if not decision.get("approved"):
-                return None, decision
-            command.append("--force")
-        return command, None
+            return None, {
+                "error": (
+                    "forced worktree removal is not available through the Hermes tool; "
+                    "inspect the worktree and use herdr-hermesctl manually"
+                )
+            }
+        return [*prefix, "task-remove", str(args["workspace_id"])], None
 
     if action == "pane_list":
         command = [*prefix, "pane-list"]
@@ -182,14 +188,17 @@ def build_args(args: dict[str, Any]) -> tuple[list[str] | None, dict[str, Any] |
         missing = required(args, "agent_name", "agent_kind", "pane_id")
         if missing:
             return None, {"error": missing}
-        command = [
-            *prefix,
-            "agent-start",
-            str(args["agent_name"]),
-            str(args["agent_kind"]),
-            str(args["pane_id"]),
-        ]
+        # argparse.REMAINDER must be the final positional. Put options before
+        # name/kind/pane so --start-timeout-ms is not forwarded to the agent.
+        command = [*prefix, "agent-start"]
         option(command, "--start-timeout-ms", args.get("start_timeout_ms"))
+        command.extend(
+            [
+                str(args["agent_name"]),
+                str(args["agent_kind"]),
+                str(args["pane_id"]),
+            ]
+        )
         native = [str(item) for item in (args.get("agent_args") or [])]
         if native:
             command.extend(["--", *native])
@@ -245,8 +254,13 @@ def handle(args: dict[str, Any], **_: Any) -> str:
         return json.dumps({"ok": False, **blocked}, ensure_ascii=False)
     assert command_args is not None
 
-    timeout_ms = int(args.get("timeout_ms") or 120000)
-    timeout_seconds = max(15, min((timeout_ms / 1000) + 30, 660))
+    requested_timeout_ms = int(args.get("timeout_ms") or 120000)
+    if args.get("action") == "agent_start":
+        requested_timeout_ms = max(
+            requested_timeout_ms,
+            int(args.get("start_timeout_ms") or 0),
+        )
+    timeout_seconds = max(15, min((requested_timeout_ms / 1000) + 30, 660))
     try:
         completed = subprocess.run(
             [sys.executable, str(controller), *command_args],
@@ -371,7 +385,6 @@ SCHEMA = {
             },
             "start_timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 300000},
             "timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 600000},
-            "force": {"type": "boolean"},
         },
         "required": ["action"],
         "additionalProperties": False,
