@@ -31,21 +31,21 @@ def truthy(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def controller_path() -> Path:
+def controller_path() -> Path | None:
     configured = os.getenv("HERDR_HARNESS_CTL")
-    candidates = [
+    candidates = (
         Path(configured).expanduser() if configured else None,
         Path.home() / ".local" / "bin" / "herdr-hermesctl",
         Path(__file__).with_name("controller.py"),
-    ]
+    )
     for candidate in candidates:
-        if candidate and candidate.is_file():
+        if candidate is not None and candidate.is_file():
             return candidate
-    return Path("")
+    return None
 
 
 def available() -> bool:
-    return bool(controller_path())
+    return controller_path() is not None
 
 
 def error(message: str, **extra: Any) -> str:
@@ -238,7 +238,7 @@ def build_args(args: dict[str, Any]) -> tuple[list[str] | None, dict[str, Any] |
 
 def handle(args: dict[str, Any], **_: Any) -> str:
     controller = controller_path()
-    if not controller:
+    if controller is None:
         return error("Herdr harness controller is not installed")
     command_args, blocked = build_args(args)
     if blocked:
