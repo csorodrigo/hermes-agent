@@ -9,6 +9,8 @@ REPO_DIR=""
 REPO_URL=""
 WORKTREES_ROOT=""
 BASE_REF="main"
+CONFIGURE_HERDRM=0
+HERDRM_DEVICE_NAME=""
 SKIP_HERDR_INSTALL=0
 SKIP_PLUGIN=0
 SKIP_WORKSPACE=0
@@ -18,26 +20,31 @@ usage() {
   cat <<'EOF'
 Install the Herdr + Hermes coding harness for one Unix user.
 
-Server/workbox:
+Server/workbox (recommended primary runtime):
   ./scripts/bootstrap_herdr_harness.sh \
-    --mode server --profile hermes --repo-dir /srv/hermes/users/alice/projects/hermes-agent \
+    --mode server --profile hermes-bot --session default \
+    --repo-dir /srv/hermes/users/hermes-bot/projects/hermes-agent \
     --repo-url git@github.com:ORG/hermes-agent.git
 
-Controller/developer machine:
+Controller/developer Mac with HerdrM:
   ./scripts/bootstrap_herdr_harness.sh \
     --mode client --profile hermes-alice --target hermes-workbox \
+    --session default \
     --repo-dir /srv/hermes/users/alice/projects/hermes-agent \
-    --worktrees-root /srv/hermes/users/alice/worktrees/hermes-agent
+    --worktrees-root /srv/hermes/users/alice/worktrees/hermes-agent \
+    --configure-herdrm --herdrm-device-name "Hermes Workbox"
 
 Options:
   --mode server|client
   --profile NAME
   --target SSH_ALIAS          Required in client mode. Prefer ~/.ssh/config alias.
-  --session NAME              Defaults to hermes-<profile>-<local-user>.
+  --session NAME              Defaults to default (required for current HerdrM SSH support).
   --repo-dir PATH             Local path in server mode; remote absolute path in client mode.
   --repo-url URL              Clone when server repo-dir is not already a Git repository.
   --worktrees-root PATH
   --base-ref REF
+  --configure-herdrm          Add the client-mode SSH target to HerdrM on macOS.
+  --herdrm-device-name NAME   Display name used by HerdrM (defaults to profile).
   --skip-herdr-install        Require an existing Herdr executable.
   --skip-plugin               Reuse an already installed harness plugin.
   --skip-workspace
@@ -56,6 +63,8 @@ while [[ $# -gt 0 ]]; do
     --repo-url) REPO_URL="$2"; shift 2 ;;
     --worktrees-root) WORKTREES_ROOT="$2"; shift 2 ;;
     --base-ref) BASE_REF="$2"; shift 2 ;;
+    --configure-herdrm) CONFIGURE_HERDRM=1; shift ;;
+    --herdrm-device-name) HERDRM_DEVICE_NAME="$2"; shift 2 ;;
     --skip-herdr-install) SKIP_HERDR_INSTALL=1; shift ;;
     --skip-plugin) SKIP_PLUGIN=1; shift ;;
     --skip-workspace) SKIP_WORKSPACE=1; shift ;;
@@ -77,20 +86,39 @@ if [[ "$MODE" == "client" && -z "$TARGET" ]]; then
   echo "--target is required in client mode" >&2
   exit 2
 fi
+if [[ "$CONFIGURE_HERDRM" -eq 1 && "$MODE" != "client" ]]; then
+  echo "--configure-herdrm is only valid in client mode" >&2
+  exit 2
+fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 PLUGIN_SOURCE="$REPO_ROOT/deploy/herdr-harness/plugin"
+HERDRM_CONFIGURATOR="$REPO_ROOT/scripts/configure_herdrm.py"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 PLUGIN_DEST="$HERMES_HOME/plugins/herdr-harness"
 BIN_DIR="$HOME/.local/bin"
 PROFILE_DIR="$HOME/.config/herdr-harness"
 PROFILE_FILE="$PROFILE_DIR/$PROFILE.ini"
 
-SESSION="${SESSION:-hermes-${PROFILE}-${USER:-user}}"
+SESSION="${SESSION:-default}"
 if [[ ! "$SESSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
   echo "Invalid Herdr session name" >&2
   exit 2
+fi
+if [[ "$CONFIGURE_HERDRM" -eq 1 ]]; then
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "--configure-herdrm requires macOS" >&2
+    exit 2
+  fi
+  if [[ "$SESSION" != "default" ]]; then
+    echo "HerdrM currently forwards the remote default socket only; use --session default" >&2
+    exit 2
+  fi
+  [[ -f "$HERDRM_CONFIGURATOR" ]] || {
+    echo "HerdrM configurator not found: $HERDRM_CONFIGURATOR" >&2
+    exit 1
+  }
 fi
 if [[ -z "$REPO_DIR" ]]; then
   if [[ "$MODE" == "server" ]]; then
@@ -204,6 +232,14 @@ if [[ "$SKIP_DOCTOR" -eq 0 ]]; then
   fi
 fi
 
+if [[ "$CONFIGURE_HERDRM" -eq 1 ]]; then
+  DEVICE_NAME="${HERDRM_DEVICE_NAME:-$PROFILE}"
+  python3 "$HERDRM_CONFIGURATOR" add \
+    --name "$DEVICE_NAME" \
+    --target "$TARGET" \
+    --probe
+fi
+
 cat <<EOF
 
 Herdr harness installed.
@@ -221,3 +257,13 @@ Hermes environment:
   HERDR_HARNESS_PROFILE=$PROFILE
   HERDR_HARNESS_AUTO_ENABLE=1
 EOF
+
+if [[ "$CONFIGURE_HERDRM" -eq 1 ]]; then
+  cat <<EOF
+
+HerdrM:
+  Device:     ${HERDRM_DEVICE_NAME:-$PROFILE}
+  SSH target: $TARGET
+  Quit and reopen HerdrM so it reloads devices.json.
+EOF
+fi
