@@ -10,6 +10,7 @@ on:
       - "scripts/remediate_herdr_fleet.command"
       - "scripts/curate_herdr_spaces.command"
       - "scripts/curate_herdr_spaces_v2.command"
+      - "scripts/diagnose_herdr_flapping.command"
       - "tests/herdr_harness/**"
       - ".github/workflows/herdr-harness.yml"
   pull_request:
@@ -22,6 +23,7 @@ on:
       - "scripts/remediate_herdr_fleet.command"
       - "scripts/curate_herdr_spaces.command"
       - "scripts/curate_herdr_spaces_v2.command"
+      - "scripts/diagnose_herdr_flapping.command"
       - "tests/herdr_harness/**"
       - ".github/workflows/herdr-harness.yml"
 
@@ -65,6 +67,7 @@ jobs:
           bash -n scripts/remediate_herdr_fleet.command
           bash -n scripts/curate_herdr_spaces.command
           bash -n scripts/curate_herdr_spaces_v2.command
+          bash -n scripts/diagnose_herdr_flapping.command
 
       - name: Run harness tests
         run: python -m pytest tests/herdr_harness -q --tb=short
