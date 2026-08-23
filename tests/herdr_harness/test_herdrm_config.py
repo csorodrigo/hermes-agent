@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -78,3 +79,34 @@ def test_invalid_inventory_fails_closed(tmp_path: Path):
     store.write_text("{not-json", encoding="utf-8")
     with pytest.raises(herdrm.HerdrMConfigError, match="cannot read"):
         herdrm.load_devices(store)
+
+
+def test_probe_prepends_remote_login_paths(monkeypatch):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(herdrm.subprocess, "run", fake_run)
+    result = herdrm.probe_target("workbox")
+    assert result["ok"] is True
+    remote = captured["command"][-1]
+    assert "$HOME/.local/bin" in remote
+    assert "command -v herdr" in remote
+
+
+def test_running_app_guard_fails_closed_on_macos(monkeypatch):
+    monkeypatch.setattr(herdrm.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        herdrm.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0),
+    )
+    with pytest.raises(herdrm.HerdrMConfigError, match="HerdrM is running"):
+        herdrm.ensure_herdrm_stopped()
+
+
+def test_running_app_guard_can_be_overridden(monkeypatch):
+    monkeypatch.setattr(herdrm.sys, "platform", "darwin")
+    herdrm.ensure_herdrm_stopped(allow_running=True)
