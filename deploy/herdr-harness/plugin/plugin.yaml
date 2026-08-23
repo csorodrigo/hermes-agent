@@ -1,5 +1,5 @@
 name: herdr-harness
-version: "1.0.0"
+version: "1.0.1"
 description: Persistent Herdr coding harness for Hermes, local or over SSH.
 author: Hermes Agent
 requires_env: []
