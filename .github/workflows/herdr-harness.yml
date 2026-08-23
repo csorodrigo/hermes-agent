@@ -35,8 +35,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install test dependency
-        run: python -m pip install --disable-pip-version-check pytest
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check pytest pytest-xdist
 
       - name: Compile Python modules
         run: |
