@@ -27,6 +27,12 @@ DEFAULT_STORE = Path.home() / "Library" / "Application Support" / "HerdrM" / "de
 DEFAULT_SSH_CONFIG = Path.home() / ".ssh" / "config"
 CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
 WILDCARD_CHARS = frozenset("*?[]!")
+REMOTE_PATH_EXPORT = (
+    'for d in "$HOME"/.nvm/versions/node/*/bin; do '
+    '[ -d "$d" ] && PATH="$d:$PATH"; done; '
+    'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.grok/bin:'
+    '/opt/homebrew/bin:/usr/local/bin:$PATH"; '
+)
 
 
 class HerdrMConfigError(RuntimeError):
@@ -93,6 +99,27 @@ def load_devices(path: Path) -> list[dict[str, Any]]:
     except (OSError, json.JSONDecodeError) as exc:
         raise HerdrMConfigError(f"cannot read {path}: {exc}") from exc
     return normalize_devices(value)
+
+
+def ensure_herdrm_stopped(*, allow_running: bool = False) -> None:
+    """Refuse writes while HerdrM may overwrite the inventory from memory."""
+    if allow_running or sys.platform != "darwin":
+        return
+    try:
+        result = subprocess.run(
+            ["pgrep", "-x", "HerdrM"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if result.returncode == 0:
+        raise HerdrMConfigError(
+            "HerdrM is running; quit the app before modifying devices.json "
+            "(or pass --allow-running-app at your own risk)"
+        )
 
 
 def atomic_save(path: Path, devices: list[dict[str, Any]]) -> Path | None:
@@ -254,7 +281,8 @@ def probe_target(
         "ServerAliveCountMax=1",
         target,
         (
-            "command -v herdr >/dev/null 2>&1 && "
+            REMOTE_PATH_EXPORT
+            + "command -v herdr >/dev/null 2>&1 && "
             "test -S \"$HOME/.config/herdr/herdr.sock\" && "
             "herdr status --json >/dev/null 2>&1"
         ),
@@ -305,14 +333,17 @@ def command_add(args: argparse.Namespace, store: Path) -> int:
         name=args.name,
         target=args.target,
     )
-    backup = atomic_save(store, devices) if changed or not store.exists() else None
+    should_write = changed or not store.exists()
+    if should_write:
+        ensure_herdrm_stopped(allow_running=args.allow_running_app)
+    backup = atomic_save(store, devices) if should_write else None
     print_result(
         {
             "ok": True,
             "changed": changed,
             "store": str(store),
             "backup": str(backup) if backup else "",
-            "restart_herdrm": True,
+            "restart_herdrm": should_write,
             "device": next(
                 device_summary(item)
                 for item in devices
@@ -355,7 +386,10 @@ def command_sync(args: argparse.Namespace, store: Path) -> int:
         )
         (added if changed else unchanged).append(alias)
 
-    backup = atomic_save(store, devices) if added or not store.exists() else None
+    should_write = bool(added) or not store.exists()
+    if should_write:
+        ensure_herdrm_stopped(allow_running=args.allow_running_app)
+    backup = atomic_save(store, devices) if should_write else None
     ok = not (args.strict and failed)
     print_result(
         {
@@ -378,6 +412,8 @@ def command_remove(args: argparse.Namespace, store: Path) -> int:
         name=args.name,
         target=args.target,
     )
+    if removed:
+        ensure_herdrm_stopped(allow_running=args.allow_running_app)
     backup = atomic_save(store, devices) if removed else None
     print_result(
         {
@@ -434,6 +470,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--ssh-binary", default="ssh")
     parser.add_argument("--probe-timeout", type=int, default=12)
+    parser.add_argument(
+        "--allow-running-app",
+        action="store_true",
+        help="write even if the HerdrM process is running and may overwrite the file",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     add = sub.add_parser("add", help="add or update one SSH device")
