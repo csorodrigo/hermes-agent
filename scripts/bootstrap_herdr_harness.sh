@@ -13,6 +13,7 @@ CONFIGURE_HERDRM=0
 HERDRM_DEVICE_NAME=""
 SKIP_HERDR_INSTALL=0
 SKIP_PLUGIN=0
+SKIP_SERVICE=0
 SKIP_WORKSPACE=0
 SKIP_DOCTOR=0
 
@@ -47,6 +48,7 @@ Options:
   --herdrm-device-name NAME   Display name used by HerdrM (defaults to profile).
   --skip-herdr-install        Require an existing Herdr executable.
   --skip-plugin               Reuse an already installed harness plugin.
+  --skip-service              Do not install/start a systemd user service in server mode.
   --skip-workspace
   --skip-doctor
   -h, --help
@@ -67,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     --herdrm-device-name) HERDRM_DEVICE_NAME="$2"; shift 2 ;;
     --skip-herdr-install) SKIP_HERDR_INSTALL=1; shift ;;
     --skip-plugin) SKIP_PLUGIN=1; shift ;;
+    --skip-service) SKIP_SERVICE=1; shift ;;
     --skip-workspace) SKIP_WORKSPACE=1; shift ;;
     --skip-doctor) SKIP_DOCTOR=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -100,6 +103,9 @@ PLUGIN_DEST="$HERMES_HOME/plugins/herdr-harness"
 BIN_DIR="$HOME/.local/bin"
 PROFILE_DIR="$HOME/.config/herdr-harness"
 PROFILE_FILE="$PROFILE_DIR/$PROFILE.ini"
+SERVICE_NAME="herdr-${PROFILE}.service"
+SERVICE_FILE="$HOME/.config/systemd/user/$SERVICE_NAME"
+SERVICE_STATE="not-installed"
 
 SESSION="${SESSION:-default}"
 if [[ ! "$SESSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
@@ -221,6 +227,52 @@ mv "$TMP_PROFILE" "$PROFILE_FILE"
 trap - EXIT
 
 export HERDR_HARNESS_PROFILE="$PROFILE"
+if [[ "$MODE" == "server" && "$SKIP_SERVICE" -eq 0 ]]; then
+  if [[ "$(uname -s)" == "Linux" && -n "$(command -v systemctl 2>/dev/null || true)" ]]; then
+    HERDR_EXECUTABLE="$(command -v herdr)"
+    mkdir -p "$(dirname -- "$SERVICE_FILE")"
+    cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=Herdr headless server ($PROFILE)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$HERDR_EXECUTABLE --session $SESSION server
+Restart=on-failure
+RestartSec=3
+Environment=PATH=$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+EOF
+    chmod 0644 "$SERVICE_FILE"
+    systemctl --user daemon-reload
+    if systemctl --user is-active --quiet "$SERVICE_NAME"; then
+      systemctl --user enable "$SERVICE_NAME" >/dev/null
+      SERVICE_STATE="active"
+    elif herdr --session "$SESSION" status --json >/dev/null 2>&1; then
+      systemctl --user enable "$SERVICE_NAME" >/dev/null
+      SERVICE_STATE="enabled-existing-server"
+      echo "Warning: an existing Herdr server is not owned by systemd; stop it before starting $SERVICE_NAME." >&2
+    else
+      systemctl --user enable --now "$SERVICE_NAME"
+      SERVICE_STATE="active"
+    fi
+    if command -v loginctl >/dev/null 2>&1; then
+      if ! loginctl enable-linger "${USER:-$(id -un)}" >/dev/null 2>&1; then
+        echo "Warning: could not enable user linger; the Herdr service may require a login after reboot." >&2
+      fi
+    fi
+  else
+    echo "Warning: systemd user services are unavailable; start 'herdr --session $SESSION server' under your supervisor." >&2
+    SERVICE_STATE="external-supervisor-required"
+  fi
+elif [[ "$MODE" == "server" ]]; then
+  SERVICE_STATE="skipped"
+fi
+
 if [[ "$SKIP_WORKSPACE" -eq 0 ]]; then
   if ! "$BIN_DIR/herdr-hermesctl" --profile "$PROFILE" --json workspace-ensure --label "$PROFILE"; then
     echo "Workspace creation failed; profile and plugin were still installed." >&2
@@ -249,6 +301,7 @@ Herdr harness installed.
   Controller: $BIN_DIR/herdr-hermesctl
   Plugin:     $PLUGIN_DEST
   Config:     $PROFILE_FILE
+  Service:    $SERVICE_STATE
 
 Attach:
   herdr-hermesctl --profile $PROFILE attach
