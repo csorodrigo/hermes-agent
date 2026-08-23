@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ CONTROLLER_PATH = ROOT / "deploy" / "herdr-harness" / "plugin" / "controller.py"
 SPEC = importlib.util.spec_from_file_location("herdr_harness_controller", CONTROLLER_PATH)
 assert SPEC and SPEC.loader
 controller = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = controller
 SPEC.loader.exec_module(controller)
 
 
