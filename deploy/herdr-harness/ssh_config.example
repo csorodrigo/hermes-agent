@@ -1,0 +1,27 @@
+Host hermes-workbox
+  HostName 203.0.113.10
+  User alice
+  IdentityFile ~/.ssh/id_ed25519_hermes
+  IdentitiesOnly yes
+  PreferredAuthentications publickey
+  PasswordAuthentication no
+  ServerAliveInterval 15
+  ServerAliveCountMax 3
+  ControlMaster auto
+  ControlPersist 10m
+  ControlPath ~/.ssh/cm-%C
+
+# Create a separate alias/account for the Hermes orchestrator. Do not share
+# the service account private key with developers.
+Host hermes-bot-workbox
+  HostName 203.0.113.10
+  User hermes-bot
+  IdentityFile ~/.ssh/id_ed25519_hermes_bot
+  IdentitiesOnly yes
+  PreferredAuthentications publickey
+  PasswordAuthentication no
+  ServerAliveInterval 15
+  ServerAliveCountMax 3
+  ControlMaster auto
+  ControlPersist 10m
+  ControlPath ~/.ssh/cm-%C
