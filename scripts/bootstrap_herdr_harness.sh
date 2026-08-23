@@ -20,14 +20,14 @@ Install the Herdr + Hermes coding harness for one Unix user.
 
 Server/workbox:
   ./scripts/bootstrap_herdr_harness.sh \
-    --mode server --profile hermes --repo-dir /srv/hermes/hermes-agent \
+    --mode server --profile hermes --repo-dir /srv/hermes/users/alice/projects/hermes-agent \
     --repo-url git@github.com:ORG/hermes-agent.git
 
 Controller/developer machine:
   ./scripts/bootstrap_herdr_harness.sh \
-    --mode client --profile hermes-larissa --target hermes-workbox \
-    --repo-dir /srv/hermes/hermes-agent \
-    --worktrees-root /srv/hermes/worktrees/larissa
+    --mode client --profile hermes-alice --target hermes-workbox \
+    --repo-dir /srv/hermes/users/alice/projects/hermes-agent \
+    --worktrees-root /srv/hermes/users/alice/worktrees/hermes-agent
 
 Options:
   --mode server|client
@@ -38,8 +38,8 @@ Options:
   --repo-url URL              Clone when server repo-dir is not already a Git repository.
   --worktrees-root PATH
   --base-ref REF
-  --skip-herdr-install
-  --skip-plugin
+  --skip-herdr-install        Require an existing Herdr executable.
+  --skip-plugin               Reuse an already installed harness plugin.
   --skip-workspace
   --skip-doctor
   -h, --help
@@ -88,6 +88,10 @@ PROFILE_DIR="$HOME/.config/herdr-harness"
 PROFILE_FILE="$PROFILE_DIR/$PROFILE.ini"
 
 SESSION="${SESSION:-hermes-${PROFILE}-${USER:-user}}"
+if [[ ! "$SESSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+  echo "Invalid Herdr session name" >&2
+  exit 2
+fi
 if [[ -z "$REPO_DIR" ]]; then
   if [[ "$MODE" == "server" ]]; then
     REPO_DIR="$HOME/src/$PROFILE"
@@ -111,10 +115,13 @@ fi
 
 command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
 command -v git >/dev/null 2>&1 || { echo "git is required" >&2; exit 1; }
+if [[ "$MODE" == "client" ]]; then
+  command -v ssh >/dev/null 2>&1 || { echo "OpenSSH client is required" >&2; exit 1; }
+fi
 mkdir -p "$BIN_DIR" "$PROFILE_DIR" "$HERMES_HOME/plugins"
-chmod 700 "$PROFILE_DIR" "$HERMES_HOME" 2>/dev/null || true
+chmod 700 "$PROFILE_DIR" 2>/dev/null || true
 
-export PATH="$BIN_DIR:$PATH"
+export PATH="$BIN_DIR:$HOME/.local/bin:$PATH"
 if ! command -v herdr >/dev/null 2>&1; then
   if [[ "$SKIP_HERDR_INSTALL" -eq 1 ]]; then
     echo "Herdr is not installed and --skip-herdr-install was set" >&2
@@ -123,8 +130,12 @@ if ! command -v herdr >/dev/null 2>&1; then
   command -v curl >/dev/null 2>&1 || { echo "curl is required to install Herdr" >&2; exit 1; }
   echo "Installing Herdr stable channel..."
   curl -fsSL https://herdr.dev/install.sh | sh
-  export PATH="$HOME/.local/bin:$PATH"
+  hash -r
 fi
+command -v herdr >/dev/null 2>&1 || {
+  echo "Herdr installation completed but the executable is not on PATH" >&2
+  exit 1
+}
 
 if [[ "$SKIP_PLUGIN" -eq 0 ]]; then
   [[ -f "$PLUGIN_SOURCE/plugin.yaml" && -f "$PLUGIN_SOURCE/__init__.py" && -f "$PLUGIN_SOURCE/controller.py" ]] || {
@@ -134,8 +145,13 @@ if [[ "$SKIP_PLUGIN" -eq 0 ]]; then
   rm -rf "$PLUGIN_DEST"
   mkdir -p "$PLUGIN_DEST"
   cp "$PLUGIN_SOURCE/plugin.yaml" "$PLUGIN_SOURCE/__init__.py" "$PLUGIN_SOURCE/controller.py" "$PLUGIN_DEST/"
-  python3 -m py_compile "$PLUGIN_DEST/__init__.py" "$PLUGIN_DEST/controller.py"
+else
+  [[ -f "$PLUGIN_DEST/plugin.yaml" && -f "$PLUGIN_DEST/__init__.py" && -f "$PLUGIN_DEST/controller.py" ]] || {
+    echo "--skip-plugin requires an existing complete plugin at $PLUGIN_DEST" >&2
+    exit 1
+  }
 fi
+python3 -m py_compile "$PLUGIN_DEST/__init__.py" "$PLUGIN_DEST/controller.py"
 
 cat > "$BIN_DIR/herdr-hermesctl" <<EOF
 #!/usr/bin/env bash
