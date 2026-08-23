@@ -4,6 +4,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 
@@ -75,8 +76,6 @@ def test_pane_run_obeys_security_guard(monkeypatch):
 
 
 def test_guard_never_inherits_container_exemption(monkeypatch):
-    import tools.approval as approval
-
     captured = {}
 
     def fake_guard(command, env_type):
@@ -84,9 +83,14 @@ def test_guard_never_inherits_container_exemption(monkeypatch):
         captured["env_type"] = env_type
         return {"approved": True, "message": None}
 
+    tools_package = types.ModuleType("tools")
+    tools_package.__path__ = []
+    approval_module = types.ModuleType("tools.approval")
+    approval_module.check_all_command_guards = fake_guard
+    monkeypatch.setitem(sys.modules, "tools", tools_package)
+    monkeypatch.setitem(sys.modules, "tools.approval", approval_module)
     monkeypatch.setenv("TERMINAL_ENV", "docker")
     monkeypatch.delenv("HERDR_SSH_TARGET", raising=False)
-    monkeypatch.setattr(approval, "check_all_command_guards", fake_guard)
 
     assert plugin.guard("git status")["approved"] is True
     assert captured == {"command": "git status", "env_type": "ssh"}
@@ -161,6 +165,8 @@ def test_force_task_remove_is_not_available_to_model():
 
 
 def test_missing_required_parameter_fails_before_execution():
-    command, blocked = plugin.build_args({"action": "agent_prompt", "target": "issue-142"})
+    command, blocked = plugin.build_args(
+        {"action": "agent_prompt", "target": "issue-142"}
+    )
     assert command is None
     assert "prompt" in blocked["error"]
