@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,6 +18,15 @@ assert SPEC and SPEC.loader
 plugin = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = plugin
 SPEC.loader.exec_module(plugin)
+
+CONTROLLER_SPEC = importlib.util.spec_from_file_location(
+    "herdr_harness_controller_for_plugin_tests",
+    PLUGIN_DIR / "controller.py",
+)
+assert CONTROLLER_SPEC and CONTROLLER_SPEC.loader
+controller = importlib.util.module_from_spec(CONTROLLER_SPEC)
+sys.modules[CONTROLLER_SPEC.name] = controller
+CONTROLLER_SPEC.loader.exec_module(controller)
 
 
 def test_task_create_maps_to_controller_arguments():
@@ -63,10 +74,29 @@ def test_pane_run_obeys_security_guard(monkeypatch):
     assert blocked["status"] == "approval_required"
 
 
-def test_agent_start_preserves_native_arguments():
+def test_guard_never_inherits_container_exemption(monkeypatch):
+    import tools.approval as approval
+
+    captured = {}
+
+    def fake_guard(command, env_type):
+        captured["command"] = command
+        captured["env_type"] = env_type
+        return {"approved": True, "message": None}
+
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
+    monkeypatch.delenv("HERDR_SSH_TARGET", raising=False)
+    monkeypatch.setattr(approval, "check_all_command_guards", fake_guard)
+
+    assert plugin.guard("git status")["approved"] is True
+    assert captured == {"command": "git status", "env_type": "ssh"}
+
+
+def test_agent_start_preserves_timeout_and_native_arguments():
     command, blocked = plugin.build_args(
         {
             "action": "agent_start",
+            "profile": "team",
             "agent_name": "issue-142",
             "agent_kind": "codex",
             "pane_id": "pane:1",
@@ -75,9 +105,59 @@ def test_agent_start_preserves_native_arguments():
         }
     )
     assert blocked is None
-    assert command[-2:] == ["--", "--full-auto"]
-    assert "agent-start" in command
-    assert "45000" in command
+
+    parsed = controller.build_parser().parse_args(command)
+    assert parsed.command == "agent-start"
+    assert parsed.name == "issue-142"
+    assert parsed.kind == "codex"
+    assert parsed.pane_id == "pane:1"
+    assert parsed.start_timeout_ms == 45000
+    assert parsed.agent_args == ["--full-auto"]
+
+
+def test_agent_start_outer_timeout_covers_controller_startup(monkeypatch):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["timeout"] = kwargs["timeout"]
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"ok": True}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(plugin, "controller_path", lambda: Path("/tmp/controller.py"))
+    monkeypatch.setattr(plugin.subprocess, "run", fake_run)
+
+    result = json.loads(
+        plugin.handle(
+            {
+                "action": "agent_start",
+                "agent_name": "reviewer",
+                "agent_kind": "codex",
+                "pane_id": "pane:1",
+                "start_timeout_ms": 300000,
+            }
+        )
+    )
+
+    assert result["ok"] is True
+    assert captured["timeout"] == 330
+
+
+def test_force_task_remove_is_not_available_to_model():
+    command, blocked = plugin.build_args(
+        {
+            "action": "task_remove",
+            "workspace_id": "w1",
+            "force": True,
+        }
+    )
+    assert command is None
+    assert "not available through the Hermes tool" in blocked["error"]
+    assert "force" not in plugin.SCHEMA["parameters"]["properties"]
 
 
 def test_missing_required_parameter_fails_before_execution():
