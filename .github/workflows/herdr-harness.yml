@@ -7,6 +7,7 @@ on:
       - "scripts/bootstrap_herdr_harness.sh"
       - "scripts/configure_herdrm.py"
       - "scripts/audit_herdr_fleet.command"
+      - "scripts/remediate_herdr_fleet.command"
       - "tests/herdr_harness/**"
       - ".github/workflows/herdr-harness.yml"
   pull_request:
@@ -16,6 +17,7 @@ on:
       - "scripts/bootstrap_herdr_harness.sh"
       - "scripts/configure_herdrm.py"
       - "scripts/audit_herdr_fleet.command"
+      - "scripts/remediate_herdr_fleet.command"
       - "tests/herdr_harness/**"
       - ".github/workflows/herdr-harness.yml"
 
@@ -56,6 +58,7 @@ jobs:
         run: |
           bash -n scripts/bootstrap_herdr_harness.sh
           bash -n scripts/audit_herdr_fleet.command
+          bash -n scripts/remediate_herdr_fleet.command
 
       - name: Run harness tests
         run: python -m pytest tests/herdr_harness -q --tb=short
