@@ -16,7 +16,7 @@ on:
       - ".github/workflows/herdr-harness.yml"
 
 concurrency:
-  group: herdr-harness-${{ github.ref }}-${{ matrix.python-version }}
+  group: herdr-harness-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
