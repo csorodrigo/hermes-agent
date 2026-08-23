@@ -1,0 +1,51 @@
+name: Herdr Harness
+
+on:
+  push:
+    paths:
+      - "deploy/herdr-harness/**"
+      - "scripts/bootstrap_herdr_harness.sh"
+      - "tests/herdr_harness/**"
+      - ".github/workflows/herdr-harness.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/herdr-harness/**"
+      - "scripts/bootstrap_herdr_harness.sh"
+      - "tests/herdr_harness/**"
+      - ".github/workflows/herdr-harness.yml"
+
+concurrency:
+  group: herdr-harness-${{ github.ref }}-${{ matrix.python-version }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test dependency
+        run: python -m pip install --disable-pip-version-check pytest
+
+      - name: Compile Python modules
+        run: |
+          python -m py_compile \
+            deploy/herdr-harness/plugin/controller.py \
+            deploy/herdr-harness/plugin/__init__.py
+
+      - name: Validate bootstrap shell
+        run: bash -n scripts/bootstrap_herdr_harness.sh
+
+      - name: Run harness tests
+        run: python -m pytest tests/herdr_harness -q --tb=short
