@@ -1,9 +1,10 @@
 ---
 name: herdr-harness
-description: Orchestrate persistent Codex, Claude, Hermes, and other coding-agent terminals through Herdr, locally or on an SSH workbox. Use for team coding, parallel worktrees, long-running agent sessions, supervision, and recovery after disconnects.
+description: Orchestrate persistent coding-agent terminals with Herdr.
 version: 1.0.0
 author: Hermes Agent
 license: MIT
+platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [Coding-Agent, Herdr, SSH, Worktrees, Team, Orchestration]
