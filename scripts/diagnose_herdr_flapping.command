@@ -1,6 +1,43 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+filter_local_processes() {
+  local mode="$1"
+  awk -v mode="$mode" '
+    mode == "app" && tolower($5) ~ /\/herdrm$/ {
+      print
+      next
+    }
+    mode == "tunnel" && $5 == "/usr/bin/ssh" && index($0, "herdrm-tunnels") {
+      print
+    }
+  '
+}
+
+process_filter_self_test() {
+  local fixture app_lines tunnel_lines
+  fixture='65737     1  13:23:12 S    /Applications/herdrm.app/Contents/MacOS/herdrm
+61864 65737   02:34:55 S    /usr/bin/ssh -N -L /tmp/herdrm-tunnels/73775.sock:/home/wedo/.config/herdr/herdr.sock wedo-backup
+70000 65737      00:01 S    /usr/bin/ssh example.invalid
+70001 65737      00:01 S    /usr/bin/awk index($0, "herdrm-tunnels")'
+  app_lines="$(printf '%s\n' "$fixture" | filter_local_processes app)"
+  tunnel_lines="$(printf '%s\n' "$fixture" | filter_local_processes tunnel)"
+
+  if [ "$(printf '%s\n' "$app_lines" | wc -l | tr -d ' ')" != "1" ] \
+    || [ "$(printf '%s\n' "$tunnel_lines" | wc -l | tr -d ' ')" != "1" ] \
+    || [[ "$app_lines" != *"/Applications/herdrm.app/Contents/MacOS/herdrm"* ]] \
+    || [[ "$tunnel_lines" != *"wedo-backup"* ]]; then
+    echo "process_filter_self_test=fail" >&2
+    return 1
+  fi
+  echo "process_filter_self_test=pass"
+}
+
+if [ "${1:-}" = "--self-test" ]; then
+  process_filter_self_test
+  exit $?
+fi
+
 # Non-destructive stability collector for HerdrM + remote Herdr servers.
 # Default: observe for 180 seconds. Override with:
 #   HERDR_FLAP_SECONDS=300 HERDR_FLAP_INTERVAL=5 ./diagnose_herdr_flapping.command
@@ -168,14 +205,16 @@ local_sampler() {
     {
       echo "@@ LOCAL_SAMPLE $(now)"
       echo "-- HerdrM process"
-      pgrep -lf 'HerdrM' 2>/dev/null || echo "none"
+      process_snapshot="$(ps -axo pid=,ppid=,etime=,state=,command= 2>/dev/null)"
+      app_snapshot="$(printf '%s\n' "$process_snapshot" | filter_local_processes app)"
+      if [ -n "$app_snapshot" ]; then
+        printf '%s\n' "$app_snapshot"
+      else
+        echo "none"
+      fi
 
       echo "-- HerdrM SSH Unix-socket tunnels"
-      ps -axo pid=,ppid=,etime=,state=,command= 2>/dev/null \
-        | awk '
-          index($0, "HerdrM.app/Contents/MacOS/HerdrM") ||
-          (index($0, "/usr/bin/ssh") && index($0, "herdrm-tunnels"))
-        ' || true
+      printf '%s\n' "$process_snapshot" | filter_local_processes tunnel || true
 
       echo "-- forwarded local sockets"
       tunnel_dir="${TMPDIR:-/tmp}"
@@ -383,7 +422,7 @@ minutes=$(( (DURATION + 299) / 60 + 5 ))
 /usr/bin/log show \
   --style compact \
   --last "${minutes}m" \
-  --predicate 'process == "HerdrM"' 2>&1 >> "$OUT" || true
+  --predicate 'process == "HerdrM" OR process == "herdrm"' 2>&1 >> "$OUT" || true
 
 emit ""
 emit "================================================================================"
