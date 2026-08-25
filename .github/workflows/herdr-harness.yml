@@ -1,0 +1,82 @@
+name: Herdr Harness
+
+on:
+  push:
+    paths:
+      - "deploy/herdr-harness/**"
+      - "scripts/bootstrap_herdr_harness.sh"
+      - "scripts/configure_herdrm.py"
+      - "scripts/audit_herdr_fleet.command"
+      - "scripts/remediate_herdr_fleet.command"
+      - "scripts/curate_herdr_spaces.command"
+      - "scripts/curate_herdr_spaces_v2.command"
+      - "scripts/diagnose_herdr_flapping.command"
+      - "tests/herdr_harness/**"
+      - ".github/workflows/herdr-harness.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/herdr-harness/**"
+      - "scripts/bootstrap_herdr_harness.sh"
+      - "scripts/configure_herdrm.py"
+      - "scripts/audit_herdr_fleet.command"
+      - "scripts/remediate_herdr_fleet.command"
+      - "scripts/curate_herdr_spaces.command"
+      - "scripts/curate_herdr_spaces_v2.command"
+      - "scripts/diagnose_herdr_flapping.command"
+      - "tests/herdr_harness/**"
+      - ".github/workflows/herdr-harness.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: herdr-harness-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # 8.2.0
+        with:
+          version: "0.9.28"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install locked test dependencies
+        run: uv sync --locked --python ${{ matrix.python-version }} --extra dev
+
+      - name: Compile Python modules
+        run: |
+          python -m py_compile \
+            deploy/herdr-harness/plugin/controller.py \
+            deploy/herdr-harness/plugin/__init__.py \
+            scripts/configure_herdrm.py
+
+      - name: Validate shell scripts
+        run: |
+          bash -n scripts/bootstrap_herdr_harness.sh
+          bash -n scripts/audit_herdr_fleet.command
+          bash -n scripts/remediate_herdr_fleet.command
+          bash -n scripts/curate_herdr_spaces.command
+          bash -n scripts/curate_herdr_spaces_v2.command
+          bash -n scripts/diagnose_herdr_flapping.command
+
+      - name: Run harness tests
+        run: .venv/bin/python -m pytest tests/herdr_harness -q --tb=short
