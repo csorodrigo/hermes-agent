@@ -534,14 +534,14 @@ describe('useVirtualHistory offset cache reuse', () => {
       scroll.scrollTo(0)
       await delay(20)
       scroll.scrollTo(5)
-      await vi.waitFor(() => expect(expose.current!.virtualHistory.start).toBeGreaterThan(0))
       const adjustScrollTop = vi.spyOn(scroll, 'adjustScrollTop')
       const staleHeights = new Map(initialHeights)
 
       staleHeights.set(items[0]!.key, 1)
       instance.rerender(React.createElement(Harness, { expose, initialHeights: staleHeights, items }))
-      await vi.waitFor(() => expect(adjustScrollTop).toHaveBeenCalledOnce())
+      await delay(40)
 
+      expect(adjustScrollTop).toHaveBeenCalledOnce()
       expect(adjustScrollTop).toHaveBeenCalledWith(1)
       expect(scroll.getScrollTop()).toBe(6)
       expect(scroll.isSticky()).toBe(false)

@@ -81,4 +81,8 @@ jobs:
       # not an empty run, because an empty run reports green after it checks
       # nothing.
       - name: Run all workspace checks
-        run: node .github/scripts/run-workspace-checks.mjs
+        # The upstream larger runner can sustain one workspace check per
+        # core. Forks use a four-core hosted runner, where parallel workspace
+        # checks make timing-sensitive terminal tests starve. Run them
+        # serially there while preserving upstream throughput.
+        run: node .github/scripts/run-workspace-checks.mjs --concurrency ${{ github.repository == 'NousResearch/hermes-agent' && 32 || 1 }}
